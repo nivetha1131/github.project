@@ -1,0 +1,20 @@
+{
+  "name": "water-purifier-commerce",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "mobile": "npm --workspace apps/mobile start",
+    "admin": "npm --workspace apps/admin dev",
+    "admin:build": "npm --workspace apps/admin build",
+    "admin:start": "npm --workspace apps/admin start"
+  },
+  "description": "",
+  "main": "index.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
