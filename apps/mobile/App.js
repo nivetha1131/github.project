@@ -18,7 +18,12 @@ import * as Notifications from 'expo-notifications';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { firebaseReady } from './firebase';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+} from 'firebase/auth';
+import { auth, firebaseReady } from './firebase';
 import { demoOrders, productCatalog, serviceBookings } from './data/products';
 
 const Tab = createBottomTabNavigator();
@@ -41,7 +46,12 @@ const getProductPrice = (product, role) => (
 
 export default function App() {
   const [role, setRole] = useState('Customer');
-  const [loggedIn, setLoggedIn] = useState(true);
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [authMode, setAuthMode] = useState('login');
+  const [authEmail, setAuthEmail] = useState('customer@pureflow.app');
+  const [authPassword, setAuthPassword] = useState('password123');
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [cart, setCart] = useState([
     {
@@ -67,8 +77,19 @@ export default function App() {
     const loadSession = async () => {
       const savedRole = await AsyncStorage.getItem('pureflow-role');
       const savedLogin = await AsyncStorage.getItem('pureflow-login');
-      if (savedRole) setRole(savedRole);
-      if (savedLogin === 'true') setLoggedIn(true);
+      const savedEmail = await AsyncStorage.getItem('pureflow-user-email');
+
+      if (savedRole) {
+        setRole(savedRole);
+      } else {
+        setRole('Customer');
+      }
+
+      if (savedEmail) {
+        setAuthEmail(savedEmail);
+      }
+
+      setLoggedIn(savedLogin === 'true');
     };
 
     loadSession();
@@ -97,13 +118,48 @@ export default function App() {
   };
 
   const handleLogin = async (selectedRole) => {
-    setRole(selectedRole);
+    const cleanedEmail = authEmail.trim();
+    const cleanedPassword = authPassword.trim();
+
+    if (firebaseReady && cleanedEmail && cleanedPassword) {
+      try {
+        setAuthLoading(true);
+        setAuthError('');
+
+        if (authMode === 'signup') {
+          await createUserWithEmailAndPassword(auth, cleanedEmail, cleanedPassword);
+        } else {
+          await signInWithEmailAndPassword(auth, cleanedEmail, cleanedPassword);
+        }
+      } catch (error) {
+        setAuthError(error?.message || 'Authentication failed.');
+        setAuthLoading(false);
+        return;
+      }
+    } else if (firebaseReady && (!cleanedEmail || !cleanedPassword)) {
+      setAuthError('Enter an email and password to continue.');
+      return;
+    }
+
+    const resolvedRole = selectedRole || role;
+    setRole(resolvedRole);
     setLoggedIn(true);
-    await AsyncStorage.setItem('pureflow-role', selectedRole);
+    await AsyncStorage.setItem('pureflow-role', resolvedRole);
     await AsyncStorage.setItem('pureflow-login', 'true');
+    await AsyncStorage.setItem('pureflow-user-email', cleanedEmail || 'demo@pureflow.app');
+    setAuthLoading(false);
+    setAuthError('');
   };
 
   const handleLogout = async () => {
+    try {
+      if (firebaseReady && auth && auth.currentUser) {
+        await signOut(auth);
+      }
+    } catch (error) {
+      console.log('Logout fallback:', error);
+    }
+
     setLoggedIn(false);
     await AsyncStorage.setItem('pureflow-login', 'false');
   };
@@ -234,7 +290,7 @@ export default function App() {
               {['Customer', 'Dealer', 'Admin'].map((entry) => (
                 <Pressable
                   key={entry}
-                  onPress={() => handleLogin(entry)}
+                  onPress={() => setRole(entry)}
                   style={[styles.roleCard, role === entry && styles.roleCardSelected]}
                 >
                   <Text style={[styles.roleText, role === entry && styles.roleTextSelected]}>{entry}</Text>
@@ -242,22 +298,42 @@ export default function App() {
               ))}
             </View>
 
+            <View style={styles.authToggleRow}>
+              {['login', 'signup'].map((mode) => (
+                <Pressable
+                  key={mode}
+                  style={[styles.authToggle, authMode === mode && styles.authToggleActive]}
+                  onPress={() => setAuthMode(mode)}
+                >
+                  <Text style={[styles.authToggleText, authMode === mode && styles.authToggleTextActive]}>
+                    {mode === 'login' ? 'Login' : 'Sign up'}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
             <TextInput
               style={styles.input}
-              value={profile.email}
-              onChangeText={(text) => setProfile((current) => ({ ...current, email: text }))}
+              value={authEmail}
+              onChangeText={setAuthEmail}
               placeholder="Email"
               keyboardType="email-address"
+              autoCapitalize="none"
             />
             <TextInput
               style={styles.input}
-              value="password123"
+              value={authPassword}
+              onChangeText={setAuthPassword}
+              placeholder="Password"
               secureTextEntry
-              editable={false}
             />
 
-            <Pressable style={styles.primaryButton} onPress={() => handleLogin(role)}>
-              <Text style={styles.primaryButtonText}>Continue as {role}</Text>
+            {authError ? <Text style={styles.errorText}>{authError}</Text> : null}
+
+            <Pressable style={styles.primaryButton} onPress={() => handleLogin(role)} disabled={authLoading}>
+              <Text style={styles.primaryButtonText}>
+                {authLoading ? 'Please wait...' : authMode === 'login' ? `Log in as ${role}` : `Create ${role} account`}
+              </Text>
             </Pressable>
 
             <Text style={styles.footerNote}>Firebase-ready configuration. Demo mode active until real keys are added.</Text>
@@ -514,6 +590,29 @@ const styles = StyleSheet.create({
   roleTextSelected: {
     color: '#fff',
   },
+  authToggleRow: {
+    flexDirection: 'row',
+    marginBottom: 12,
+    backgroundColor: '#e2e8f0',
+    borderRadius: 10,
+    padding: 4,
+  },
+  authToggle: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  authToggleActive: {
+    backgroundColor: '#fff',
+  },
+  authToggleText: {
+    color: '#475569',
+    fontWeight: '700',
+  },
+  authToggleTextActive: {
+    color: '#0f172a',
+  },
   input: {
     backgroundColor: '#f8fafc',
     borderColor: '#dbeafe',
@@ -551,6 +650,11 @@ const styles = StyleSheet.create({
     color: '#475569',
     textAlign: 'center',
     fontSize: 12,
+  },
+  errorText: {
+    color: '#b91c1c',
+    marginBottom: 8,
+    fontWeight: '600',
   },
   screenWrap: {
     flex: 1,
